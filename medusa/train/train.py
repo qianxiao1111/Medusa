@@ -35,7 +35,11 @@ from fastchat.model.model_adapter import get_conversation_template
 from torch.nn import CrossEntropyLoss
 from torch.nn import functional as F
 import os
-from medusa.model.medusa_model import MedusaModel, MedusaConfig
+import sys
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(os.path.dirname(SCRIPT_DIR))
+from model.medusa_model import MedusaModel, MedusaConfig
+
 
 IGNORE_TOKEN_ID = LabelSmoother.ignore_index
 
@@ -187,7 +191,7 @@ def preprocess(
         for j, sentence in enumerate(source):
             role = roles[sentence["from"]]
             assert role == conv.roles[j % 2], f"{i}, {j}, {role}, {conv.roles[j % 2]}"
-            conv.append_message(role, sentence["value"])
+            conv.append_message(role, str(sentence["value"]))
         conversations.append(conv.get_prompt())
 
     # Tokenize conversations
@@ -396,7 +400,7 @@ def train():
     )
 
     # Format output dir
-    training_args.output_dir = f"{training_args.output_dir}_medusa_mlp_{model_args.model_name_or_path.split('/')[-1]}_medusa_{training_args.medusa_num_heads}_lr_{training_args.learning_rate}_layers_{training_args.medusa_num_layers}"
+    # training_args.output_dir = f"{training_args.output_dir}"
 
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         model_args.model_name_or_path,
