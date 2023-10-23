@@ -1,0 +1,23 @@
+CUDA_VISIBLE_DEVICES=0,1,2,3 deepspeed --num_gpus=4  medusa/train/train_self_defined.py \
+    --model_name_or_path /home/qyhuang/weights/checkpoint-100 \
+    --data_path /home/qyhuang/zhaliangyu/Medusa/data/sample_v0.2/train_dsl.json \
+    --bf16 False \
+    --deepspeed scripts/deepspeed.json \
+    --output_dir  medusa_weights/wizardlm13b_medusa \
+    --num_train_epochs 1 \
+    --per_device_train_batch_size 1 \
+    --per_device_eval_batch_size 1 \
+    --gradient_accumulation_steps 1 \
+    --evaluation_strategy "no" \
+    --save_strategy "steps" \
+    --save_step 200 \
+    --learning_rate 1e-3 \
+    --weight_decay 0.0 \
+    --warmup_ratio 0.1 \
+    --lr_scheduler_type "cosine" \
+    --logging_steps 1 \
+    --fp16 True \
+    --model_max_length 2048 \
+    --lazy_preprocess False \
+    --medusa_num_heads 3 \
+    --medusa_num_layers 1
