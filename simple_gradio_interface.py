@@ -3,6 +3,8 @@ import time
 import torch
 from medusa.model.medusa_model import MedusaModel
 from fastchat.model.model_adapter import get_conversation_template
+from fastchat.conversation import Conversation, SeparatorStyle
+
 
 # Global variables
 chat_history = ""
@@ -11,7 +13,10 @@ tokenizer = None
 conv = None
 
 
-def load_model_function(model_name, load_in_8bit=False, load_in_4bit=False):
+def load_model_function(model_name,
+                        load_in_8bit=False,
+                        load_in_4bit=False,
+                        self_defined = True):
     model_name = model_name or "FasterDecoding/medusa-vicuna-7b-v1.3"
     global model, tokenizer, conv
 
@@ -25,27 +30,59 @@ def load_model_function(model_name, load_in_8bit=False, load_in_4bit=False):
             load_in_4bit=load_in_4bit
         )
         tokenizer = model.get_tokenizer()
-        conv = get_conversation_template("vicuna")
+        if self_defined:
+            conv = Conversation(
+                name="wizardlm for dsl",
+                system_message="数据库的信息如下所示：{db_info},\n schema'和'detail'表示数据库的内容; 'foreign_keys'表示数据库多表之间的连接关系. "
+                               "根据数据库信息以及用户的输入生成符合json格式输出的指令. \n\n",
+                roles=["USER", "ASSISTANT"],
+                messages=[],
+                offset=0,
+                sep_style=SeparatorStyle.ADD_COLON_TWO,
+                sep=" ",
+                sep2="</s>",
+            )
+        else:
+            conv = get_conversation_template("vicuna")
         return "Model loaded successfully!"
     except:
         return "Error loading the model. Please check the model name and try again."
 
 
-def reset_conversation():
+def reset_conversation(self_defined=True, db_info ={}):
     """
     Reset the global conversation and chat history
     """
     global conv, chat_history
-    conv = get_conversation_template("vicuna")
+    if self_defined:
+        conv = Conversation(
+            name="wizardlm for dsl",
+            system_message="数据库的信息如下所示：{db_info},\n schema'和'detail'表示数据库的内容; 'foreign_keys'表示数据库多表之间的连接关系. "
+                           "根据数据库信息以及用户的输入生成符合json格式输出的指令. \n\n",
+            roles=["USER", "ASSISTANT"],
+            messages=[],
+            offset=0,
+            sep_style=SeparatorStyle.ADD_COLON_TWO,
+            sep=" ",
+            sep2="</s>",
+        )
+        conv.system_message = conv.system_message.format(db_info=db_info)
+    else:
+        conv = get_conversation_template("vicuna")
     chat_history = ""
 
 
-def medusa_chat_interface(user_input, temperature, max_steps, no_history):
+def medusa_chat_interface(user_input,
+                          temperature,
+                          max_steps,
+                          no_history,
+                          self_defined=True,
+                          db_infos = {}):
     global model, tokenizer, conv, chat_history
 
     # Reset the conversation if no_history is checked
     if no_history:
-        reset_conversation()
+        reset_conversation(self_defined, db_info=db_infos)
 
     if not model or not tokenizer:
         return "Error: Model not loaded!", chat_history
