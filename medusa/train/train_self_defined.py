@@ -262,16 +262,14 @@ def preprocess(
 
     # Mask targets. Only compute loss on the assistant outputs.
     targets = input_ids.clone()
-
-    assert conv.sep_style == SeparatorStyle.ADD_COLON_TWO
     # Mask targets
     sep = conv.sep + conv.roles[1] + ": "
     for conversation, target in zip(conversations, targets):
         total_len = int(target.ne(tokenizer.pad_token_id).sum())
 
         rounds = conversation.split(conv.sep2)
-        cur_len = 1
-        target[:cur_len] = IGNORE_TOKEN_ID
+        cur_len = 1 # all the input_ids start at bos:</s> [2]
+        target[:cur_len] = IGNORE_TOKEN_ID  # ignore bos_token
         for i, rou in enumerate(rounds):
             if rou == "":
                 break
@@ -281,30 +279,25 @@ def preprocess(
             if len(parts) != 2:
                 break
             parts[0] += sep
-            round_len = len(tokenizer(rou).input_ids) - 2
-
-            # ??
+            round_len = len(tokenizer(rou).input_ids)
             instruction_len = len(tokenizer(parts[0]).input_ids) - 2
-            output_len = len(tokenizer(parts[1]).input_ids)
 
             target[cur_len: cur_len + instruction_len] = IGNORE_TOKEN_ID
 
             cur_len += round_len
 
-        target[cur_len:] = IGNORE_TOKEN_ID
-
-        if False:
-            z = target.clone()
-            z = torch.where(z == IGNORE_TOKEN_ID, tokenizer.unk_token_id, z)
-            rank0_print(tokenizer.decode(z))
+        target[cur_len:] = IGNORE_TOKEN_ID # ignore the padding part
 
         if cur_len < tokenizer.model_max_length:
             if cur_len != total_len:
                 target[:] = IGNORE_TOKEN_ID
                 rank0_print(
+                    f"Match failed!"
                     f"WARNING: tokenization mismatch: {cur_len} vs. {total_len}."
                     f" (ignored)"
                 )
+            else:
+                print(f"Success!! cur_len: {cur_len} vs. total_len: {total_len}.")
     return dict(
         input_ids=input_ids,
         labels=targets,
@@ -325,7 +318,7 @@ class SupervisedDataset(Dataset):
 
         rank0_print("Formatting inputs...")
         sources = [example["conversations"] for example in raw_data]
-        db_infos =[example["table_infos"] for example in raw_data]
+        db_infos = [example["table_infos"] for example in raw_data]
         cot_inputs = [example["chain_of_thought"] for example in raw_data]
         for conv, cot_input in zip(sources, cot_inputs):
             conv[0]["value"] = "original input: \n" + conv[0]["value"] + "\n"
@@ -510,15 +503,16 @@ def train():
             "eos_token": DEFAULT_EOS_TOKEN,
             "bos_token": DEFAULT_BOS_TOKEN,
             "unk_token": DEFAULT_UNK_TOKEN,
+            "pad_token": DEFAULT_PAD_TOKEN
         }
     )
-    tokenizer.pad_token = tokenizer.unk_token
-    if tokenizer.pad_token is None:
-        smart_tokenizer_and_embedding_resize(
-            special_tokens_dict=dict(pad_token=DEFAULT_PAD_TOKEN),
-            tokenizer=tokenizer,
-            model=model,
-        )
+    # tokenizer.pad_token = tokenizer.unk_token
+    # if tokenizer.pad_token is None:
+    #     smart_tokenizer_and_embedding_resize(
+    #         special_tokens_dict=dict(pad_token=DEFAULT_PAD_TOKEN),
+    #         tokenizer=tokenizer,
+    #         model=model,
+    #     )
 
     # Load data
     data_module = make_supervised_data_module(tokenizer=tokenizer, data_args=data_args)

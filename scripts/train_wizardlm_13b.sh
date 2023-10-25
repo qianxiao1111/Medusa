@@ -1,5 +1,5 @@
 CUDA_VISIBLE_DEVICES=0,1,2,3 deepspeed --num_gpus=4  medusa/train/train_self_defined.py \
-    --model_name_or_path /home/qyhuang/weights/checkpoint-100 \
+    --model_name_or_path /home/qyhuang/weights/dsl_weights/wizardlm-10-16-dsl/checkpoint-100 \
     --data_path /home/qyhuang/zhaliangyu/Medusa/data/sample_v0.2/train_dsl.json \
     --bf16 False \
     --deepspeed scripts/deepspeed.json \
@@ -17,7 +17,8 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 deepspeed --num_gpus=4  medusa/train/train_self_def
     --lr_scheduler_type "cosine" \
     --logging_steps 1 \
     --fp16 True \
-    --model_max_length 2048 \
+    --model_max_length 4096 \
     --lazy_preprocess False \
-    --medusa_num_heads 3 \
-    --medusa_num_layers 1
+    --medusa_num_heads 4 \
+    --medusa_num_layers 2 \
+    --load_in_4bit True
