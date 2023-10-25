@@ -44,10 +44,10 @@ from torch.nn import CrossEntropyLoss
 from torch.nn import functional as F
 import os
 import sys
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(SCRIPT_DIR))
 from model.medusa_model import MedusaModel, MedusaConfig
-
 
 IGNORE_TOKEN_ID = LabelSmoother.ignore_index
 
@@ -56,6 +56,32 @@ DEFAULT_PAD_TOKEN = "[PAD]"
 DEFAULT_EOS_TOKEN = "</s>"
 DEFAULT_BOS_TOKEN = "</s>"
 DEFAULT_UNK_TOKEN = "</s>"
+
+
+def NEFTune(model, noise_alpha=5):
+    '''NEFTune for Medusa, for different model like llama2,
+    change the last line of code'''
+
+    def noised_embed(orig_embed, noise_alpha):
+        def new_func(x):
+            # during training, we add noise to the embedding
+            # during generation, we don't add noise to the embedding
+            if model.training:
+                embed_init = orig_embed(x)
+                dims = torch.tensor(embed_init.size(1) * embed_init.size(2))
+                mag_norm = noise_alpha / torch.sqrt(dims)
+                return embed_init + torch.zeros_like(embed_init).uniform_(
+                    -mag_norm, mag_norm)
+            else:
+                return orig_embed(x)
+
+        return new_func
+
+    ##### NOTE: this is for a LLaMA model #####
+    ##### For a different model, you need to change the attribute path to the embedding #####
+    model.base_model.base_model.embed_tokens.forward = \
+        noised_embed(model.base_model.base_model.embed_tokens, noise_alpha)
+    return model
 
 
 # Customized for training Medusa heads
@@ -79,7 +105,8 @@ class CustomizedTrainer(Trainer):
             medusa = model.medusa
 
         logits = model(
-            input_ids=inputs["input_ids"], attention_mask=inputs["attention_mask"]
+            input_ids=inputs["input_ids"],
+            attention_mask=inputs["attention_mask"]
         )
         labels = inputs["labels"]
         # Shift so that tokens < n predict n
@@ -88,7 +115,7 @@ class CustomizedTrainer(Trainer):
         log = {}
         for i in range(medusa):
             medusa_logits = logits[i, :, : -(2 + i)].contiguous()
-            medusa_labels = labels[..., 2 + i :].contiguous()
+            medusa_labels = labels[..., 2 + i:].contiguous()
             medusa_logits = medusa_logits.view(-1, logits.shape[-1])
             medusa_labels = medusa_labels.view(-1)
             medusa_labels = medusa_labels.to(medusa_logits.device)
@@ -162,7 +189,8 @@ def rank0_print(*args):
         print(*args)
 
 
-def safe_save_model_for_hf_trainer(trainer: transformers.Trainer, output_dir: str):
+def safe_save_model_for_hf_trainer(trainer: transformers.Trainer,
+                                   output_dir: str):
     """
     Save the model's state dictionary to a specified directory.
 
@@ -175,6 +203,7 @@ def safe_save_model_for_hf_trainer(trainer: transformers.Trainer, output_dir: st
         cpu_state_dict = {key: value.cpu() for key, value in state_dict.items()}
         del state_dict
         trainer._save(output_dir, state_dict=cpu_state_dict)  # noqa
+
 
 def _tokenize_fn(strings: Sequence[str],
                  tokenizer: transformers.PreTrainedTokenizer) -> Dict:
@@ -200,10 +229,11 @@ def _tokenize_fn(strings: Sequence[str],
         labels_lens=labels_lens,
     )
 
+
 def preprocess(
-    sources,
-    tokenizer: transformers.PreTrainedTokenizer,
-    db_infos
+        sources,
+        tokenizer: transformers.PreTrainedTokenizer,
+        db_infos
 ) -> Dict:
     """
     Preprocesses conversation data and tokenizes it for model input.
@@ -220,7 +250,7 @@ def preprocess(
     conv = Conversation(
         name="wizardlm for dsl",
         system_message="数据库的信息如下所示：{db_info},\n schema'和'detail'表示数据库的内容; 'foreign_keys'表示数据库多表之间的连接关系. "
-               "根据数据库信息以及用户的输入生成符合json格式输出的指令. \n\n",
+                       "根据数据库信息以及用户的输入生成符合json格式输出的指令. \n\n",
         roles=["USER", "ASSISTANT"],
         messages=[],
         offset=0,
@@ -241,13 +271,14 @@ def preprocess(
         conv.messages = []
         for j, sentence in enumerate(source):
             role = roles[sentence["from"]]
-            assert role == conv.roles[j % 2], f"{i}, {j}, {role}, {conv.roles[j % 2]}"
+            assert role == conv.roles[
+                j % 2], f"{i}, {j}, {role}, {conv.roles[j % 2]}"
             conv.append_message(role, str(sentence["value"]))
-        db_info = str(db_info).replace("{","{{").replace("}", "}}")
+        db_info = str(db_info).replace("{", "{{").replace("}", "}}")
         conv_copy = copy.deepcopy(conv)
-        conv_copy.system_message = conv_copy.system_message.format(db_info=db_info)
+        conv_copy.system_message = conv_copy.system_message.format(
+            db_info=db_info)
         conversations.append(conv_copy.get_prompt())
-
 
     # Tokenize conversations
     input_ids = tokenizer(
@@ -268,7 +299,7 @@ def preprocess(
         total_len = int(target.ne(tokenizer.pad_token_id).sum())
 
         rounds = conversation.split(conv.sep2)
-        cur_len = 1 # all the input_ids start at bos:</s> [2]
+        cur_len = 1  # all the input_ids start at bos:</s> [2]
         target[:cur_len] = IGNORE_TOKEN_ID  # ignore bos_token
         for i, rou in enumerate(rounds):
             if rou == "":
@@ -286,7 +317,7 @@ def preprocess(
 
             cur_len += round_len
 
-        target[cur_len:] = IGNORE_TOKEN_ID # ignore the padding part
+        target[cur_len:] = IGNORE_TOKEN_ID  # ignore the padding part
 
         if cur_len < tokenizer.model_max_length:
             if cur_len != total_len:
@@ -297,7 +328,8 @@ def preprocess(
                     f" (ignored)"
                 )
             else:
-                print(f"Success!! cur_len: {cur_len} vs. total_len: {total_len}.")
+                print(
+                    f"Success!! cur_len: {cur_len} vs. total_len: {total_len}.")
     return dict(
         input_ids=input_ids,
         labels=targets,
@@ -344,6 +376,7 @@ class SupervisedDataset(Dataset):
             attention_mask=self.attention_mask[i],
         )
 
+
 class LazySupervisedDataset(Dataset):
     """Lazy dataset for supervised fine-tuning.
 
@@ -385,7 +418,7 @@ class LazySupervisedDataset(Dataset):
 
 
 def make_supervised_data_module(
-    tokenizer: transformers.PreTrainedTokenizer, data_args
+        tokenizer: transformers.PreTrainedTokenizer, data_args
 ) -> Dict:
     """Make dataset and collator for supervised fine-tuning.
 
@@ -412,6 +445,7 @@ def make_supervised_data_module(
 
     return dict(train_dataset=train_dataset, eval_dataset=eval_dataset)
 
+
 def smart_tokenizer_and_embedding_resize(
         special_tokens_dict: Dict,
         tokenizer: transformers.PreTrainedTokenizer,
@@ -436,6 +470,7 @@ def smart_tokenizer_and_embedding_resize(
         input_embeddings[-num_new_tokens:] = input_embeddings_avg
         output_embeddings[-num_new_tokens:] = output_embeddings_avg
 
+
 def train():
     global local_rank
 
@@ -452,7 +487,8 @@ def train():
     )
     orig_ctx_len = getattr(config, "max_position_embeddings", None)
     if orig_ctx_len and training_args.model_max_length > orig_ctx_len:
-        scaling_factor = float(math.ceil(training_args.model_max_length / orig_ctx_len))
+        scaling_factor = float(
+            math.ceil(training_args.model_max_length / orig_ctx_len))
         config.rope_scaling = {"type": "linear", "factor": scaling_factor}
     config.use_cache = False
 
@@ -515,7 +551,8 @@ def train():
     #     )
 
     # Load data
-    data_module = make_supervised_data_module(tokenizer=tokenizer, data_args=data_args)
+    data_module = make_supervised_data_module(tokenizer=tokenizer,
+                                              data_args=data_args)
 
     # Generate Medusa config for pushing to HF hub
     medusa_config = MedusaConfig(
@@ -530,7 +567,8 @@ def train():
     # import pdb; pdb.set_trace()
     # Start trainner
     trainer = CustomizedTrainer(
-        model=medusa_lm_head, tokenizer=tokenizer, args=training_args, **data_module
+        model=medusa_lm_head, tokenizer=tokenizer, args=training_args,
+        **data_module
     )
 
     if list(pathlib.Path(training_args.output_dir).glob("checkpoint-*")):
