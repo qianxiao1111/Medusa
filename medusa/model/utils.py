@@ -1,41 +1,43 @@
 import torch
 
-TOPK=10 # topk for sparse tree
+TOPK = 10  # topk for sparse tree
+
 
 def pad_path(path, length, pad_value=-2):
     """
     Pad the given path list with a specific value up to a specified length.
-    
+
     Parameters:
     - path (list): The original list that needs padding.
     - length (int): The desired length of the padded list.
     - pad_value (optional, default=-2): The value to use for padding.
-    
+
     Returns:
     - list: A new list based on the original path but padded to the desired length.
-    
+
     Example:
     >>> pad_path([1,2,3], 5)
     [1, 2, 3, -2, -2]
-    
+
     Note:
-    If the given path is already longer than the specified length, 
+    If the given path is already longer than the specified length,
     then no padding occurs, and the original path is returned.
     """
-    
+
     # Calculate the number of padding values needed by subtracting the length
     # of the path from the desired length.
     # Append the padding values to the original path and return the new list.
     return path + [pad_value] * (length - len(path))
 
+
 def generate_medusa_buffers(medusa_choices, device="cuda"):
     """
     Generate buffers for the Medusa structure based on the provided choices.
-    
+
     Parameters:
     - medusa_choices (list): A nested list representing tree in the Medusa structure.
     - device (str): Device to which the tensors should be moved. Default is "cuda".
-    
+
     Returns:
     - dict: A dictionary containing buffers related to the Medusa structure.
     """
@@ -53,7 +55,7 @@ def generate_medusa_buffers(medusa_choices, device="cuda"):
             depth_counts.append(0)
         depth_counts[depth - 1] += 1
         prev_depth = depth
-    
+
     # Create the attention mask for Medusa
     medusa_attn_mask = torch.eye(medusa_len, medusa_len)
     medusa_attn_mask[:, 0] = 1
@@ -66,7 +68,8 @@ def generate_medusa_buffers(medusa_choices, device="cuda"):
                 continue
             ancestor_idx = []
             for c in range(len(cur_medusa_choice) - 1):
-                ancestor_idx.append(sorted_medusa_choices.index(cur_medusa_choice[:c+1]) + 1)
+                ancestor_idx.append(
+                    sorted_medusa_choices.index(cur_medusa_choice[:c + 1]) + 1)
             medusa_attn_mask[j + start + 1, ancestor_idx] = 1
         start += depth_counts[i]
 
@@ -77,7 +80,8 @@ def generate_medusa_buffers(medusa_choices, device="cuda"):
     for i in range(len(depth_counts)):
         for j in range(depth_counts[i]):
             cur_medusa_choice = sorted_medusa_choices[start + j]
-            medusa_tree_indices[start + j + 1] = cur_medusa_choice[-1] + TOPK * i + 1
+            medusa_tree_indices[start + j + 1] = cur_medusa_choice[
+                                                     -1] + TOPK * i + 1
         start += depth_counts[i]
 
     # Generate position IDs for the Medusa structure
@@ -91,20 +95,24 @@ def generate_medusa_buffers(medusa_choices, device="cuda"):
     retrieve_indices_nest = []
     retrieve_paths = []
     for i in range(len(sorted_medusa_choices)):
-        cur_medusa_choice = sorted_medusa_choices[-i-1]
+        cur_medusa_choice = sorted_medusa_choices[-i - 1]
         retrieve_indice = []
         if cur_medusa_choice in retrieve_paths:
             continue
         else:
             for c in range(len(cur_medusa_choice)):
-                retrieve_indice.append(sorted_medusa_choices.index(cur_medusa_choice[:c+1]))
-                retrieve_paths.append(cur_medusa_choice[:c+1])
+                retrieve_indice.append(
+                    sorted_medusa_choices.index(cur_medusa_choice[:c + 1]))
+                retrieve_paths.append(cur_medusa_choice[:c + 1])
         retrieve_indices_nest.append(retrieve_indice)
     max_length = max([len(x) for x in retrieve_indices_nest])
-    retrieve_indices = [pad_path(path, max_length) for path in retrieve_indices_nest]
+    retrieve_indices = [pad_path(path, max_length) for path in
+                        retrieve_indices_nest]
     retrieve_indices = torch.tensor(retrieve_indices, dtype=torch.long)
     retrieve_indices = retrieve_indices + 1
-    retrieve_indices = torch.cat([torch.zeros((retrieve_indices.shape[0], 1), dtype=torch.long), retrieve_indices], dim=1)
+    retrieve_indices = torch.cat(
+        [torch.zeros((retrieve_indices.shape[0], 1), dtype=torch.long),
+         retrieve_indices], dim=1)
 
     # Aggregate the generated buffers into a dictionary
     medusa_buffers = {
@@ -112,13 +120,13 @@ def generate_medusa_buffers(medusa_choices, device="cuda"):
         "tree_indices": medusa_tree_indices,
         "medusa_position_ids": medusa_position_ids,
         "retrieve_indices": retrieve_indices,
-        }
-    
+    }
+
     # Move the tensors in the dictionary to the specified device
     medusa_buffers = {
         k: v.clone().to(device)
         if isinstance(v, torch.Tensor)
-        else torch.tensor(v,  device=device)
+        else torch.tensor(v, device=device)
         for k, v in medusa_buffers.items()
     }
     return medusa_buffers
@@ -151,7 +159,7 @@ def initialize_medusa(input_ids, model, medusa_attn_mask, past_key_values):
 
 
 def reset_medusa_mode(
-    model,
+        model,
 ):
     """
     Resets the Medusa settings and the past key-values to their initial state.
@@ -197,13 +205,13 @@ def reset_past_key_values(passed_key_values):
 def generate_candidates(medusa_logits, logits, tree_indices, retrieve_indices):
     """
     Generate candidates based on provided logits and indices.
-    
+
     Parameters:
     - medusa_logits (torch.Tensor): Logits associated with the Medusa structure.
     - logits (torch.Tensor): Original logits.
     - tree_indices (list or torch.Tensor): Indices associated with a tree structure.
     - retrieve_indices (list or torch.Tensor): Indices for retrieving candidates.
-    
+
     Returns:
     - tuple: Returns cartesian candidates and tree candidates.
     """
@@ -212,16 +220,21 @@ def generate_candidates(medusa_logits, logits, tree_indices, retrieve_indices):
     candidates_logit = torch.argmax(logits[:, -1]).unsqueeze(0)
 
     # Extract the TOPK candidates from the medusa logits.
-    candidates_medusa_logits = torch.topk(medusa_logits[:, 0, -1], TOPK, dim = -1).indices
+    candidates_medusa_logits = torch.topk(medusa_logits[:, 0, -1], TOPK,
+                                          dim=-1).indices
 
     # Combine the selected candidate from the original logits with the topk medusa logits.
-    candidates = torch.cat([candidates_logit, candidates_medusa_logits.view(-1)], dim=-1)
+    candidates = torch.cat(
+        [candidates_logit, candidates_medusa_logits.view(-1)], dim=-1)
 
     # Map the combined candidates to the tree indices to get tree candidates.
     tree_candidates = candidates[tree_indices]
 
     # Extend the tree candidates by appending a zero.
-    tree_candidates_ext = torch.cat([tree_candidates, torch.zeros((1), dtype=torch.long, device=tree_candidates.device)], dim=0)
+    tree_candidates_ext = torch.cat([tree_candidates,
+                                     torch.zeros((1), dtype=torch.long,
+                                                 device=tree_candidates.device)],
+                                    dim=0)
 
     # Retrieve the cartesian candidates using the retrieve indices.
     cart_candidates = tree_candidates_ext[retrieve_indices]
@@ -232,16 +245,16 @@ def generate_candidates(medusa_logits, logits, tree_indices, retrieve_indices):
 
 
 def tree_decoding(
-    model,
-    tree_candidates,
-    past_key_values,
-    medusa_position_ids,
-    input_ids,
-    retrieve_indices,
+        model,
+        tree_candidates,
+        past_key_values,
+        medusa_position_ids,
+        input_ids,
+        retrieve_indices,
 ):
     """
     Decode the tree candidates using the provided model and reorganize the logits.
-    
+
     Parameters:
     - model (nn.Module): Model to be used for decoding the tree candidates.
     - tree_candidates (torch.Tensor): Input candidates based on a tree structure.
@@ -249,7 +262,7 @@ def tree_decoding(
     - medusa_position_ids (torch.Tensor): Positional IDs associated with the Medusa structure.
     - input_ids (torch.Tensor): Input sequence IDs.
     - retrieve_indices (list or torch.Tensor): Indices for reordering the logits.
-    
+
     Returns:
     - tuple: Returns medusa logits, regular logits, and other outputs from the model.
     """
@@ -257,7 +270,7 @@ def tree_decoding(
     # Compute new position IDs by adding the Medusa position IDs to the length of the input sequence.
     position_ids = medusa_position_ids + input_ids.shape[1]
 
-    # Use the model to decode the tree candidates. 
+    # Use the model to decode the tree candidates.
     # The model is expected to return logits for the Medusa structure, original logits, and possibly other outputs.
     tree_medusa_logits, outputs, tree_logits = model(
         tree_candidates,
@@ -265,7 +278,7 @@ def tree_decoding(
         past_key_values=past_key_values,
         position_ids=position_ids,
     )
-    
+
     # Reorder the obtained logits based on the retrieve_indices to ensure consistency with some reference ordering.
     logits = tree_logits[0, retrieve_indices]
     medusa_logits = tree_medusa_logits[:, 0, retrieve_indices]
@@ -273,7 +286,7 @@ def tree_decoding(
 
 
 def evaluate_posterior(
-    logits, candidates, temperature, posterior_threshold, posterior_alpha
+        logits, candidates, temperature, posterior_threshold, posterior_alpha
 ):
     """
     Evaluate the posterior probabilities of the candidates based on the provided logits and choose the best candidate.
@@ -296,16 +309,19 @@ def evaluate_posterior(
     if temperature == 0:
         # Find the tokens that match the maximum logits for each position in the sequence
         posterior_mask = (
-            candidates[:, 1:] == torch.argmax(logits[:, :-1], dim=-1)
+                candidates[:, 1:] == torch.argmax(logits[:, :-1], dim=-1)
         ).int()
-        candidates_accept_length = (torch.cumprod(posterior_mask, dim=1)).sum(dim=1)
+        candidates_accept_length = (torch.cumprod(posterior_mask, dim=1)).sum(
+            dim=1)
         accept_length = candidates_accept_length.max()
         # Choose the best candidate
         if accept_length == 0:
             # Default to the first candidate if none are accepted
-            best_candidate = torch.tensor(0, dtype=torch.long, device=candidates.device)
+            best_candidate = torch.tensor(0, dtype=torch.long,
+                                          device=candidates.device)
         else:
-            best_candidate = torch.argmax(candidates_accept_length).to(torch.long)
+            best_candidate = torch.argmax(candidates_accept_length).to(
+                torch.long)
         return best_candidate, accept_length
     # Calculate posterior probabilities and thresholds for candidate selection
     posterior_prob = torch.softmax(logits[:, :-1] / temperature, dim=-1)
@@ -326,9 +342,11 @@ def evaluate_posterior(
     accept_length = candidates_accept_length.max()
     if accept_length == 0:
         # If no candidates are accepted, just choose the first one
-        best_candidate = torch.tensor(0, dtype=torch.long, device=candidates.device)
+        best_candidate = torch.tensor(0, dtype=torch.long,
+                                      device=candidates.device)
     else:
-        best_candidates = torch.where(candidates_accept_length == accept_length)[0]
+        best_candidates = \
+        torch.where(candidates_accept_length == accept_length)[0]
         # Accept the best one according to likelihood
         likelihood = torch.sum(
             torch.log(candidates_prob[best_candidates, :accept_length]), dim=-1
@@ -338,17 +356,17 @@ def evaluate_posterior(
 
 
 def update_inference_inputs(
-    input_ids,
-    candidates,
-    best_candidate,
-    accept_length,
-    retrieve_indices,
-    outputs,
-    logits,
-    medusa_logits,
-    new_token,
-    past_key_values_data,
-    current_length_data,
+        input_ids,
+        candidates,
+        best_candidate,
+        accept_length,
+        retrieve_indices,
+        outputs,
+        logits,
+        medusa_logits,
+        new_token,
+        past_key_values_data,
+        current_length_data,
 ):
     """
     Update the input sequences and relevant tensors based on the selected best candidate from the inference results.
@@ -374,17 +392,20 @@ def update_inference_inputs(
     prev_input_len = input_ids.shape[1]
     # Map the best candidate indices to the original indices in the sequence
     select_indices = (
-        retrieve_indices[best_candidate, : accept_length + 1] + prev_input_len
+            retrieve_indices[best_candidate,
+            : accept_length + 1] + prev_input_len
     )
     # Append the tokens from the best candidate to the input sequence
     input_ids = torch.cat(
-        [input_ids, candidates[None, best_candidate, : accept_length + 1]], dim=-1
+        [input_ids, candidates[None, best_candidate, : accept_length + 1]],
+        dim=-1
     )
     # Update the past key values based on the selected tokens
     # Source tensor that contains relevant past information based on the selected candidate
     tgt = past_key_values_data[..., select_indices, :]
     # Destination tensor where the relevant past information will be stored
-    dst = past_key_values_data[..., prev_input_len : prev_input_len + tgt.shape[-2], :]
+    dst = past_key_values_data[...,
+          prev_input_len: prev_input_len + tgt.shape[-2], :]
     # Copy relevant past information from the source to the destination
     dst.copy_(tgt, non_blocking=True)
 
@@ -392,10 +413,10 @@ def update_inference_inputs(
     current_length_data.fill_(prev_input_len + tgt.shape[-2])
 
     # Extract logits and medusa logits for the accepted tokens
-    logits = logits[None, best_candidate, accept_length : accept_length + 1]
+    logits = logits[None, best_candidate, accept_length: accept_length + 1]
     medusa_logits = medusa_logits[
-        :, None, best_candidate, accept_length : accept_length + 1
-    ]
+                    :, None, best_candidate, accept_length: accept_length + 1
+                    ]
     # Update the new token counter
     new_token += accept_length + 1
 

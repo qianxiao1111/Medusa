@@ -235,8 +235,9 @@ DEFAULT_PAD_TOKEN = "[PAD]"
 DEFAULT_EOS_TOKEN = "</s>"
 DEFAULT_BOS_TOKEN = "</s>"
 DEFAULT_UNK_TOKEN = "</s>"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
-device_map = {"": int(os.environ.get("LOCAL_RANK", "1"))}
+device_map = {"": int(os.environ.get("LOCAL_RANK", "0"))}
 
 config = transformers.AutoConfig.from_pretrained(
     base_model_path,

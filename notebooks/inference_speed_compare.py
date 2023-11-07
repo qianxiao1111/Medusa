@@ -1,17 +1,10 @@
-# -*- coding: utf-8 -*-
-"""
-@Time ： 2023/10/26 11:02
-@Auth ： zhaliangyu
-@File ：inference_speed_compare.py
-@IDE ：PyCharm
-"""
-
-#%%
+# %%
 
 import torch
 import os
 import transformers
 from medusa.model.medusa_model import MedusaModel
+from transformers import BitsAndBytesConfig
 import time
 from contextlib import contextmanager
 import numpy as np
@@ -19,10 +12,7 @@ from medusa.model.utils import *
 from medusa.model.kv_cache import *
 from medusa.model.medusa_choices import mc_sim_7b_63
 
-print("finish import")
-
 #%%
-# define time calculate
 @contextmanager
 def timed(wall_times, key):
     start = time.time()
@@ -65,7 +55,7 @@ def medusa_forward(input_ids, model, tokenizer, medusa_choices, temperature, pos
             model.past_key_values_data = past_key_values_data
             model.current_length_data = current_length_data
 
-        input_len = len(input_ids)
+        input_len = input_ids.shape[1]
         reset_medusa_mode(model)
         medusa_logits, logits = initialize_medusa(
                 input_ids, model, medusa_buffers["medusa_attn_mask"], past_key_values
@@ -117,20 +107,13 @@ def medusa_forward(input_ids, model, tokenizer, medusa_choices, temperature, pos
     return input_ids, new_token, idx, wall_times
 
 #%%
+
 # load medusa model and set hyper-params
-from transformers import BitsAndBytesConfig
 base_model_path = "/home/qyhuang/weights/dsl_weights/wizardlm-10-16-dsl/checkpoint-100"
 medusa_path = "/home/qyhuang/weights/wizardlm13b_medusa"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+device_map = {"": int(os.environ.get("LOCAL_RANK", "0"))}
 cache_dir = ""
-DEFAULT_PAD_TOKEN = "[PAD]"
-DEFAULT_EOS_TOKEN = "</s>"
-DEFAULT_BOS_TOKEN = "</s>"
-DEFAULT_UNK_TOKEN = "</s>"
-
-config = transformers.AutoConfig.from_pretrained(
-    base_model_path,
-    cache_dir=cache_dir
-)
 
 quantization_config = BitsAndBytesConfig(
     load_in_4bit=True,
@@ -138,46 +121,58 @@ quantization_config = BitsAndBytesConfig(
     bnb_4bit_use_double_quant=True,
     bnb_4bit_quant_type="nf4",
 )
-#
-# base_model = transformers.AutoModelForCausalLM.from_pretrained(
-#     base_model_path,
-#     config=config,
-#     cache_dir=cache_dir,
-#     low_cpu_mem_usage=True,
-#     torch_dtype=torch.bfloat16,
-#     quantization_config=quantization_config,
-#     load_in_4bit=True,
-# )
-# print("finish loading base model")
-#%%
-model = MedusaModel.from_pretrained(
-    base_model=base_model_path,
-    medusa_head_name_or_path=medusa_path
-)
 
 tokenizer = transformers.AutoTokenizer.from_pretrained(
     base_model_path,
     cache_dir=cache_dir,
-    model_max_length=4096,
+    max_new_tokens=512,
     padding_side="right",
     use_fast=False,
 )
 
-# tokenizer = model.get_tokenizer()
-tokenizer.add_special_tokens(
-    {
-        "eos_token": DEFAULT_EOS_TOKEN,
-        "bos_token": DEFAULT_BOS_TOKEN,
-        "unk_token": DEFAULT_UNK_TOKEN,
-        "pad_token": DEFAULT_PAD_TOKEN
-    }
+config = transformers.AutoConfig.from_pretrained(
+    base_model_path,
+    cache_dir=cache_dir
 )
+
+base_model = transformers.AutoModelForCausalLM.from_pretrained(
+    base_model_path,
+    config=config,
+    cache_dir=cache_dir,
+    low_cpu_mem_usage=True,
+    torch_dtype=torch.bfloat16,
+    quantization_config=quantization_config,
+    load_in_4bit=True,
+    device_map=device_map
+)
+#%%
+PROMPT = "数据库的信息如下所示：{db_info},\n schema'和'detail'表示数据库的内容; 'foreign_keys'表示数据库多表之间的连接关系. " \
+         "根据数据库信息以及用户的输入生成符合json格式输出的指令. \n\nUSER: {user_query}\nASSISTANT:"
+
+db_info = """{"db_name": "Twenty-Five_Cents", "db_info": {"Twenty-Five_Cents": {"numeric_info": {"Year": [2006, 2007, 2007], "Issue price": [24.95, 24.95, 24.95]}, "categorical_info": {"Theme": ["Calgary Flames", "Edmonton Oilers", "Montreal Canadiens", "Ottawa Senators", "Toronto Maple Leafs", "Vancouver Canucks"], "Artist": ["N/A"], "Mintage": ["1264", "1634", "2213", "2952", "3527", "832", "N/A"]}, "date_cols_info": {}}}, "foreign_keys": []}"""
+db_info = db_info.replace("{","{{").replace("}", "}}")
+user_query = "不同主题的平均发行价格是多少？"
+PROMPT = PROMPT.format(db_info=db_info,
+                       user_query=user_query)
+input_ids = torch.as_tensor(tokenizer.encode(PROMPT)).unsqueeze(0).cuda()
+
+print(base_model.model(input_ids))
+
+model = MedusaModel.from_pretrained(
+    base_model=base_model,
+    tokenizer=tokenizer,
+    from_check_point=False,
+    medusa_head_name_or_path=medusa_path,
+    torch_dtype=torch.bfloat16,
+)
+# #
+# model.cuda()
+tokenizer = model.get_tokenizer()
 temperature = 0.
 posterior_threshold = 0.09
 posterior_alpha = 0.3
 
 #%%
-
 PROMPT = "数据库的信息如下所示：{db_info},\n schema'和'detail'表示数据库的内容; 'foreign_keys'表示数据库多表之间的连接关系. " \
          "根据数据库信息以及用户的输入生成符合json格式输出的指令. \n\nUSER: {user_query}\nASSISTANT:"
 
@@ -189,7 +184,7 @@ PROMPT = PROMPT.format(db_info=db_info,
 medusa_choices = mc_sim_7b_63
 
 with torch.inference_mode():
-    input_ids = tokenizer([PROMPT]).input_ids
+    input_ids = torch.tensor(tokenizer.encode(PROMPT)).unsqueeze(0)
     output_ids, new_token, idx, wall_time = medusa_forward(
                     torch.as_tensor(input_ids).cuda(),
                     model,
@@ -202,8 +197,9 @@ with torch.inference_mode():
     print("Output length:", output_ids.size(-1))
     print("Compression ratio:", new_token / idx)
 
+# print("output_ids:",output_ids)
 output = tokenizer.decode(
-                    output_ids,
+                    output_ids[0],
                     spaces_between_special_tokens=False,
                 )
 print(output)

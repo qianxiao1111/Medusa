@@ -23,11 +23,11 @@ class MedusaConfig(PretrainedConfig):
     """
 
     def __init__(
-        self,
-        medusa_num_heads=4,
-        medusa_num_layers=1,
-        base_model_name_or_path="lmsys/vicuna-7b-v1.3",
-        **kwargs,
+            self,
+            medusa_num_heads=4,
+            medusa_num_layers=1,
+            base_model_name_or_path="lmsys/vicuna-7b-v1.3",
+            **kwargs,
     ):
         super().__init__(**kwargs)
         self.medusa_num_heads = medusa_num_heads
@@ -76,11 +76,12 @@ class MedusaModel(nn.Module):
     """
 
     def __init__(
-        self,
-        base_model,
-        medusa_num_heads=4,
-        medusa_num_layers=1,
-        base_model_name_or_path="lmsys/vicuna-7b-v1.3",
+            self,
+            base_model,
+            tokenizer=None,
+            medusa_num_heads=4,
+            medusa_num_layers=1,
+            base_model_name_or_path="lmsys/vicuna-7b-v1.3",
     ):
         """
         Args:
@@ -96,7 +97,11 @@ class MedusaModel(nn.Module):
         self.medusa = medusa_num_heads
         self.medusa_num_layers = medusa_num_layers
         self.base_model_name_or_path = base_model_name_or_path
-        self.tokenizer = AutoTokenizer.from_pretrained(self.base_model_name_or_path)
+        if tokenizer is not None:
+            self.tokenizer = tokenizer
+        else:
+            self.tokenizer = AutoTokenizer.from_pretrained(base_model_name_or_path)
+
         # Create a list of Medusa heads
         self.medusa_head = nn.ModuleList(
             [
@@ -113,7 +118,8 @@ class MedusaModel(nn.Module):
 
         for i in range(medusa_num_heads):
             # Initialize the weights of each medusa_head using the base model's weights
-            self.medusa_head[i][-1].weight.data[:] = base_model.lm_head.weight.data[:]
+            self.medusa_head[i][-1].weight.data[
+            :] = base_model.lm_head.weight.data[:]
 
     def get_tokenizer(self):
         """Get the tokenizer of the base model.
@@ -125,12 +131,13 @@ class MedusaModel(nn.Module):
 
     @classmethod
     def from_pretrained(
-        cls,
-        medusa_head_name_or_path,
-        base_model=None,
-        medusa_num_heads=None,
-        from_check_point=False,
-        **kwargs,
+            cls,
+            medusa_head_name_or_path,
+            tokenizer=None,
+            base_model=None,
+            medusa_num_heads=None,
+            from_check_point=False,
+            **kwargs,
     ):
         """
         Args:
@@ -141,48 +148,49 @@ class MedusaModel(nn.Module):
             MedusaModel: A MedusaModel instance loaded from the given path.
         """
         medusa_config = MedusaConfig.from_pretrained(medusa_head_name_or_path)
+
         if medusa_num_heads is not None:
             print("Overriding medusa_num_heads as:", medusa_num_heads)
             medusa_config.medusa_num_heads = medusa_num_heads
-        if base_model is not None:
-            # print("Overriding base_model as:", base_model)
-            medusa_config.base_model_name_or_path = base_model
-            
-        base_model = KVLlamaForCausalLM.from_pretrained(
-            medusa_config.base_model_name_or_path,
-            pretraining_tp=1,
-            **kwargs
-        )
 
+        # base_model = KVLlamaForCausalLM.from_pretrained(
+        #     medusa_config.base_model_name_or_path,
+        #     pretraining_tp=1,
+        #     **kwargs
+        # )
         model = cls(
             base_model,
+            tokenizer,
             medusa_config.medusa_num_heads,
             medusa_config.medusa_num_layers,
             medusa_config.base_model_name_or_path,
         )
         if from_check_point:
-            medusa_head_path = os.path.join(medusa_head_name_or_path, "pytorch_model.bin")
+            medusa_head_path = os.path.join(medusa_head_name_or_path,
+                                            "pytorch_model.bin")
         else:
-            medusa_head_path = os.path.join(medusa_head_name_or_path, "medusa_lm_head.pt")
+            medusa_head_path = os.path.join(medusa_head_name_or_path,
+                                            "medusa_lm_head.pt")
         if os.path.exists(medusa_head_path):
             filename = medusa_head_path
         else:
-            filename = hf_hub_download(medusa_head_name_or_path, "medusa_lm_head.pt")
+            filename = hf_hub_download(medusa_head_name_or_path,
+                                       "medusa_lm_head.pt")
 
-        medusa_head_state_dict = torch.load(filename, map_location=base_model.device)
+        medusa_head_state_dict = torch.load(filename,
+                                            map_location=base_model.device)
         model.medusa_head.load_state_dict(medusa_head_state_dict, strict=False)
-        model.to(base_model.device)
 
         return model
 
     def forward(
-        self,
-        input_ids=None,
-        attention_mask=None,
-        labels=None,
-        past_key_values=None,
-        output_orig=False,
-        position_ids=None,
+            self,
+            input_ids=None,
+            attention_mask=None,
+            labels=None,
+            past_key_values=None,
+            output_orig=False,
+            position_ids=None,
     ):
         """Forward pass of the MedusaModel.
 
@@ -219,17 +227,17 @@ class MedusaModel(nn.Module):
         return torch.stack(medusa_logits, dim=0)
 
     def medusa_generate(
-        self,
-        input_ids,
-        attention_mask=None,
-        temperature=0.0,
-        max_steps=512,
-        # The hyperparameters below are for the Medusa
-        # top-1 prediciton for the next token, top-7 predictions for the next token, top-6 predictions for the next next token.
-        medusa_choices=mc_sim_7b_63,
-        posterior_threshold=0.09,  # threshold validation of Medusa output
-        # another threshold hyperparameter, recommended to be sqrt(posterior_threshold)
-        posterior_alpha=0.3,
+            self,
+            input_ids,
+            attention_mask=None,
+            temperature=0.0,
+            max_steps=512,
+            # The hyperparameters below are for the Medusa
+            # top-1 prediciton for the next token, top-7 predictions for the next token, top-6 predictions for the next next token.
+            medusa_choices=mc_sim_7b_63,
+            posterior_threshold=0.09,  # threshold validation of Medusa output
+            # another threshold hyperparameter, recommended to be sqrt(posterior_threshold)
+            posterior_alpha=0.3,
     ):
         """
         Args:
@@ -249,7 +257,8 @@ class MedusaModel(nn.Module):
         input_ids = input_ids.clone()
 
         # Cache medusa buffers (the fixed patterns for tree attention)
-        if hasattr(self, "medusa_choices") and self.medusa_choices == medusa_choices:
+        if hasattr(self,
+                   "medusa_choices") and self.medusa_choices == medusa_choices:
             # Load the cached medusa buffer
             medusa_buffers = self.medusa_buffers
         else:
@@ -259,7 +268,6 @@ class MedusaModel(nn.Module):
             )
         self.medusa_buffers = medusa_buffers
         self.medusa_choices = medusa_choices
-
 
         # Initialize the past key and value states
         if hasattr(self, "past_key_values"):
@@ -310,7 +318,8 @@ class MedusaModel(nn.Module):
 
             # Evaluate the posterior of the candidates to select the accepted candidate prefix
             best_candidate, accept_length = evaluate_posterior(
-                logits, candidates, temperature, posterior_threshold, posterior_alpha
+                logits, candidates, temperature, posterior_threshold,
+                posterior_alpha
             )
 
             # Update the input_ids and logits
