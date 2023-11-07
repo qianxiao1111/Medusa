@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import transformers
 from transformers import PreTrainedModel, PretrainedConfig
 from .modeling_llama_kv import LlamaForCausalLM as KVLlamaForCausalLM
 from .utils import *
@@ -128,6 +129,7 @@ class MedusaModel(nn.Module):
         medusa_head_name_or_path,
         base_model=None,
         medusa_num_heads=None,
+        from_check_point=False,
         **kwargs,
     ):
         """
@@ -143,11 +145,13 @@ class MedusaModel(nn.Module):
             print("Overriding medusa_num_heads as:", medusa_num_heads)
             medusa_config.medusa_num_heads = medusa_num_heads
         if base_model is not None:
-            print("Overriding base_model as:", base_model)
+            # print("Overriding base_model as:", base_model)
             medusa_config.base_model_name_or_path = base_model
             
         base_model = KVLlamaForCausalLM.from_pretrained(
-            medusa_config.base_model_name_or_path, **kwargs
+            medusa_config.base_model_name_or_path,
+            pretraining_tp=1,
+            **kwargs
         )
 
         model = cls(
@@ -156,13 +160,18 @@ class MedusaModel(nn.Module):
             medusa_config.medusa_num_layers,
             medusa_config.base_model_name_or_path,
         )
-        medusa_head_path = os.path.join(medusa_head_name_or_path, "medusa_lm_head.pt")
+        if from_check_point:
+            medusa_head_path = os.path.join(medusa_head_name_or_path, "pytorch_model.bin")
+        else:
+            medusa_head_path = os.path.join(medusa_head_name_or_path, "medusa_lm_head.pt")
         if os.path.exists(medusa_head_path):
             filename = medusa_head_path
         else:
             filename = hf_hub_download(medusa_head_name_or_path, "medusa_lm_head.pt")
+
         medusa_head_state_dict = torch.load(filename, map_location=base_model.device)
         model.medusa_head.load_state_dict(medusa_head_state_dict, strict=False)
+        model.to(base_model.device)
 
         return model
 

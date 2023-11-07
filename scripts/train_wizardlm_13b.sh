@@ -4,21 +4,21 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 deepspeed --num_gpus=4  medusa/train/train_self_def
     --bf16 False \
     --deepspeed scripts/deepspeed.json \
     --output_dir  medusa_weights/wizardlm13b_medusa \
-    --num_train_epochs 1 \
-    --per_device_train_batch_size 1 \
+    --num_train_epochs 4 \
+    --per_device_train_batch_size 2 \
     --per_device_eval_batch_size 1 \
-    --gradient_accumulation_steps 1 \
+    --gradient_accumulation_steps 2 \
     --evaluation_strategy "no" \
     --save_strategy "steps" \
-    --save_step 200 \
-    --learning_rate 1e-3 \
+    --save_step 800 \
+    --learning_rate 5e-4 \
     --weight_decay 0.0 \
     --warmup_ratio 0.1 \
     --lr_scheduler_type "cosine" \
-    --logging_steps 1 \
+    --logging_steps 10 \
     --fp16 True \
     --model_max_length 4096 \
     --lazy_preprocess False \
-    --medusa_num_heads 4 \
+    --medusa_num_heads 3 \
     --medusa_num_layers 2 \
     --load_in_4bit True

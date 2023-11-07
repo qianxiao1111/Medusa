@@ -40,7 +40,7 @@ from transformers.trainer_pt_utils import LabelSmoother
 
 from fastchat.conversation import SeparatorStyle, Conversation
 from fastchat.model.model_adapter import get_conversation_template
-from torch.nn import CrossEntropyLoss
+from torch.nn import CrossEntropyLoss, NLLLoss
 from torch.nn import functional as F
 import os
 import sys
@@ -132,6 +132,7 @@ class CustomizedTrainer(Trainer):
                 log[f"medusa{i}_top{k}"] = correct.float().mean().item()
 
             log[f"medusa{i}_loss"] = loss_i.item()
+        print("*" * 20)
         self.log(log)
         return (loss, logits) if return_outputs else loss
 
@@ -249,7 +250,7 @@ def preprocess(
 
     conv = Conversation(
         name="wizardlm for dsl",
-        system_message="数据库的信息如下所示：{db_info},\n schema'和'detail'表示数据库的内容; 'foreign_keys'表示数据库多表之间的连接关系. "
+        system_message="数据库的信息如下所示：\n{db_info},\n schema'和'detail'表示数据库的内容; 'foreign_keys'表示数据库多表之间的连接关系. "
                        "根据数据库信息以及用户的输入生成符合json格式输出的指令. \n\n",
         roles=["USER", "ASSISTANT"],
         messages=[],
@@ -297,7 +298,6 @@ def preprocess(
     sep = conv.sep + conv.roles[1] + ": "
     for conversation, target in zip(conversations, targets):
         total_len = int(target.ne(tokenizer.pad_token_id).sum())
-
         rounds = conversation.split(conv.sep2)
         cur_len = 1  # all the input_ids start at bos:</s> [2]
         target[:cur_len] = IGNORE_TOKEN_ID  # ignore bos_token
@@ -499,16 +499,19 @@ def train():
         bnb_4bit_quant_type="nf4",
     )
 
+    device_map = {"": int(os.environ.get("LOCAL_RANK", "0"))}
+
     # Load model and tokenizer
     model = transformers.AutoModelForCausalLM.from_pretrained(
         model_args.model_name_or_path,
         config=config,
         cache_dir=training_args.cache_dir,
-        low_cpu_mem_usage=False,
+        low_cpu_mem_usage=True,
         torch_dtype=torch.bfloat16,
         quantization_config=quantization_config if model_args.load_in_4bit else None,
         load_in_4bit=model_args.load_in_4bit,
         load_in_8bit=model_args.load_in_8bit,
+        device_map = device_map
     )
 
     # Freeze the base model
@@ -522,6 +525,8 @@ def train():
         medusa_num_layers=training_args.medusa_num_layers,
         base_model_name_or_path=model_args.model_name_or_path,
     )
+
+    # medusa_lm_head = NEFTune(medusa_lm_head)
 
     # Format output dir
     # training_args.output_dir = f"{training_args.output_dir}"
